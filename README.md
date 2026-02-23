@@ -1,6 +1,8 @@
 # NDVI Explorer
 
 A browser-based tool to explore Landsat satellite imagery and compute NDVI over any area of interest.
+
+https://ndvi-visor.netlify.app/
 ---
 
 ## How to use
