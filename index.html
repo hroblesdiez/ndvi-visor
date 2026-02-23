@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NDVI Explorer · Landsat C2L2</title>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Source+Code+Pro:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/main.css" />
+
+  <!-- Third-party libraries (must be global, before ES modules) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+  <!-- proj4 — reprojects WGS84 bbox → UTM for COG window reads -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+  <script>
+    // Pre-register all 60 UTM North + South zones so proj4 can reproject
+    // Landsat scenes (which are stored in UTM per path/row)
+    (function registerUTMZones() {
+      for (let z = 1; z <= 60; z++) {
+        const lon0 = -177 + (z - 1) * 6;
+        proj4.defs(`EPSG:${32600 + z}`,
+          `+proj=utm +zone=${z} +datum=WGS84 +units=m +no_defs`);
+        proj4.defs(`EPSG:${32700 + z}`,
+          `+proj=utm +zone=${z} +south +datum=WGS84 +units=m +no_defs`);
+      }
+      proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
+    })();
+  </script>
+
+  <!-- App entry point (ES module) -->
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+<div id="app">
+
+    <!-- ── TOPBAR ─────────────────────────────────────── -->
+    <header id="topbar">
+      <div class="logo">
+        <div class="logo-icon">🛰</div>
+        NDVI <span>/</span> Explorer
+      </div>
+      <div class="badge">LANDSAT C2L2</div>
+      <div class="badge">PLANETARY COMPUTER</div>
+      <div class="sep"></div>
+      <div id="statusbar">
+        <div id="sdot"></div>
+        <span id="stxt">READY</span>
+      </div>
+    </header>
+
+    <!-- ── SIDEBAR ────────────────────────────────────── -->
+    <aside id="panel">
+
+      <!-- AOI -->
+      <div class="sec">
+        <div class="slabel"><span class="slabel-icon">📐</span> Area of Interest</div>
+        <div id="bbox-box" class="empty">Draw a rectangle on the map&#10;to define your AOI</div>
+        <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button class="btn btn-cyan"  onclick="onClickDraw()">⬚ Draw AOI</button>
+          <button class="btn btn-ghost" onclick="onClickClear()">✕ Clear</button>
+        </div>
+      </div>
+
+      <!-- Search Parameters -->
+      <div class="sec">
+        <div class="slabel"><span class="slabel-icon">🔍</span> Search Parameters</div>
+        <div class="frow">
+          <div class="field">
+            <label>DATE START</label>
+            <input type="date" id="d0" />
+          </div>
+          <div class="field">
+            <label>DATE END</label>
+            <input type="date" id="d1" />
+          </div>
+        </div>
+        <div class="field">
+          <label>MAX CLOUD COVER</label>
+          <div class="rng-wrap">
+            <input type="range" id="cloud" min="0" max="100" step="5" value="20"
+              oninput="document.getElementById('cval').textContent = this.value + '%'" />
+            <div class="rval" id="cval">20%</div>
+          </div>
+        </div>
+        <div class="field">
+          <label>COLORMAP</label>
+          <select id="cmap">
+            <option value="rdylgn">RdYlGn — Red→Green</option>
+            <option value="greens">Greens</option>
+            <option value="viridis">Viridis</option>
+            <option value="spectral">Spectral</option>
+            <option value="ylgn">YlGn</option>
+          </select>
+        </div>
+        <button class="btn btn-cyan" id="btn-search" disabled onclick="onClickSearch()">
+          ⌕ Search Scenes
+        </button>
+      </div>
+
+      <!-- Scene count label -->
+      <div class="slabel" style="padding:12px 15px 0;margin-bottom:0">
+        Scenes <span id="scount" style="color:var(--accent);font-family:var(--mono);font-size:11px;margin-left:3px"></span>
+      </div>
+
+      <!-- Scene list -->
+      <div id="scenes-wrap">
+        <div class="empty-msg">
+          <div class="ico">🛰</div>
+          No scenes loaded.<br/>Define AOI and search.
+        </div>
+      </div>
+
+      <!-- NDVI button -->
+      <div class="sec" style="margin-top:auto">
+        <button class="btn btn-green" id="btn-ndvi" disabled onclick="onClickNDVI()">
+          ◈ Generate NDVI
+        </button>
+      </div>
+
+    </aside>
+
+    <!-- ── MAP ────────────────────────────────────────── -->
+    <div id="mapwrap">
+      <div id="map"></div>
+
+      <!-- Loader overlay -->
+      <div id="loader">
+        <div id="progress-bar"></div>
+        <div class="spin"></div>
+        <div class="ltxt" id="ltxt">LOADING…</div>
+      </div>
+
+      <!-- NDVI Legend (visible after generation) -->
+      <div id="ndvi-legend">
+        <div class="legend-title">NDVI</div>
+        <div class="legend-labels">
+          <span>−1</span><span>−0.5</span><span>0</span><span>+0.5</span><span>+1</span>
+        </div>
+        <canvas id="legend-bar" width="260" height="16"></canvas>
+        <div class="legend-classes">
+          <span>Water</span>
+          <span>Bare</span>
+          <span>Sparse</span>
+          <span>Moderate</span>
+          <span>Dense</span>
+        </div>
+        <div class="legend-stats">
+          <div class="ls"><span class="lsl">MIN</span><span class="lsv" id="s-min">—</span></div>
+          <div class="ls"><span class="lsl">MEAN</span><span class="lsv" id="s-mean">—</span></div>
+          <div class="ls"><span class="lsl">MAX</span><span class="lsv" id="s-max">—</span></div>
+          <div class="ls"><span class="lsl">VEG&nbsp;%</span><span class="lsv" id="s-veg">—</span></div>
+        </div>
+      </div>
+
+      <!-- Hidden canvas used to build the NDVI data URL -->
+      <canvas id="ndvi-canvas" style="display:none"></canvas>
+
+      <!-- Coordinate HUD -->
+      <div id="hud">LAT — · LON —</div>
+    </div>
+
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast"></div>
+
+</body>
+</html>
